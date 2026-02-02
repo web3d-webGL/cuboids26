@@ -101,11 +101,11 @@ The viewer accepts .csv files using the following column structure (supports com
 
     index.html - For development convenience all viewer code is contained in a single file
 
-        /tex/ - WebP textures (grid, wood, patterns, matcaps, and hemi-maps)
+    /tex/ - WebP textures (grid, wood, patterns, matcaps, and hemi-maps)
 
-        /wasm/ - The v4_27_adj.wasm binary
+    /wasm/ - The v4_27_adj.wasm binary
 
-        /data_samples/ - Set of 10 uniform, non-uniform and extremely elongated cuboid data for testing purpose
+    /data_samples/ - Set of 10 uniform, non-uniform and extremely elongated cuboid data for testing purpose
 
 2. Local Server: Due to WASM and Web Worker security policies, this file must be served via a local or remote web server (e.g., npx serve, python HTTP, WAMP).
 
