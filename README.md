@@ -12,19 +12,19 @@ High-performance WebGL viewer designed to sort face adjacent cuboids, discard lo
 
 ## Key Features
 
-- Multi-Threaded Processing
+• Multi-Threaded Processing
   Uses Web Workers to offload CSV parsing and spatial binning, keeping the UI responsive even with 800k+ objects.
 
-- WASM Adjacency Grouping
+• WASM Adjacency Grouping
   A custom WebAssembly module handles high-speed connectivity checks to group touching cuboids.
 
-- Tri-Planar Shader Mapping
+• Tri-Planar Shader Mapping
   Custom GLSL injection for seamless textures on cuboids without manual UV unwrapping.
 
-- Adaptive Spatial Grid
+• Adaptive Spatial Grid
   Automatically calculates optimal voxel density based on data distribution to minimize intersection tests.
 
-- Instanced Rendering
+• Instanced Rendering
   Leverages InstancedMesh to draw thousands of complex objects in a single GPU draw call.
 
 ## Technical Pipeline
@@ -52,21 +52,21 @@ The application processes data through a high-speed five-stage pipeline:
 
 ### Material Modes
 
-- PBR Mode
+• PBR Mode
   Full Physically Based Rendering with tri-planar mapping, roughness adjustment, and procedural bump mapping.
 
-- MatCap Mode
+• MatCap Mode
   A high-performance "shading-only" mode that uses spherical environment textures for rapid visual debugging.
 
 ### Navigation & UI
 
-- Texture Controls
+• Texture Controls
   Real-time scaling, rotation, and axis-alignment for projected textures.
 
-- Environment
+• Environment
   Shuffle between multiple HDR/Equirectangular environments for varied lighting.
 
-- Group Visualization
+• Group Visualization
   Toggleable bounding boxes to highlight automatically discovered cuboid clusters.
 ---
 
@@ -112,24 +112,24 @@ The viewer accepts .csv files using the following column structure (supports com
 ---
 
 ## Feature Set (v4.70.4)
-    • Zero-Lag Processing: Threaded WASM grouping off-loads the main thread.
-    • Diagnostic Modes: UV checker and MatCap modes for internal structural inspection.
-    • Materials: Physical materials (PBR) with adjustable bump and roughness scales.
-    • Environmental Fidelity: Image-Based Lighting (IBL) using Hemi-equirectangular maps for realistic shading.
-    • Architectural Accuracy: Automatic "Up-Axis" correction and real-time texture rotation (90°).
+• Zero-Lag Processing: Threaded WASM grouping off-loads the main thread.
+• Diagnostic Modes: UV checker and MatCap modes for internal structural inspection.
+• Materials: Physical materials (PBR) with adjustable bump and roughness scales.
+• Environmental Fidelity: Image-Based Lighting (IBL) using Hemi-equirectangular maps for realistic shading.
+• Architectural Accuracy: Automatic "Up-Axis" correction and real-time texture rotation (90°).
 
 
 ## Justification: WebGL 2
 WebGL 2 (via Three.js) was selected for this task over WebGPU for the following reasons:
-    1. Compatibility: WebGL 2 has broader support across stable browser versions (including mobile) as of 2024.
-    2. InstancedMesh Support: WebGL 2 provides native support for gl.drawElementsInstanced, which is the backbone of this app's performance.
-    3. Shader Maturity: The onBeforeCompile workflow in Three.js allows for rapid prototyping of complex PBR-integrated shaders that would require significantly more boilerplate in WebGPU.
+1. Compatibility: WebGL 2 has broader support across stable browser versions (including mobile) as of 2024.
+2. InstancedMesh Support: WebGL 2 provides native support for gl.drawElementsInstanced, which is the backbone of this app's performance.
+3. Shader Maturity: The onBeforeCompile workflow in Three.js allows for rapid prototyping of complex PBR-integrated shaders that would require significantly more boilerplate in WebGPU.
 
 ## The Macro Traps: Why GPU/WebGPU Was Avoided
-    1. OSX WebGL Instability: Safari and OSX drivers have long-documented issues with high-memory buffers in WebGL, often leading to "Context Lost" errors when processing 500k+ elements.
-    2. WebGPU Readiness: While powerful, WebGPU lacks universal support (especially on mobile and older corporate hardware).
-    3. The Mobile Gap: Many mobile browsers lack the specific WebGL extensions needed for high-performance bitwise operations or large data textures.
-    4. Floating Point Precision: GPUs struggle with exact integer adjacency. At large scales, $3000.0 + 1.0$ can lose precision, leading to "ghost connections" or missing groups.
+1. OSX WebGL Instability: Safari and OSX drivers have long-documented issues with high-memory buffers in WebGL, often leading to "Context Lost" errors when processing 500k+ elements.
+2. WebGPU Readiness: While powerful, WebGPU lacks universal support (especially on mobile and older corporate hardware).
+3. The Mobile Gap: Many mobile browsers lack the specific WebGL extensions needed for high-performance bitwise operations or large data textures.
+4. Floating Point Precision: GPUs struggle with exact integer adjacency. At large scales, $3000.0 + 1.0$ can lose precision, leading to "ghost connections" or missing groups.
 
 ---
 
