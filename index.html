@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>3D Cuboid Viewer v4.70.5 - optimized sorting</title>
+  <style>
+    /* UI STYLING: Defines the layout for the sidebar controls and the full-screen canvas */
+    html, body { margin:0; padding:0; overflow:hidden; font-family: 'Segoe UI', system-ui, sans-serif; background:#0a0a0a; color:#eee;}
+    canvas { display:block; }
+    /* Position file input over the top-left */
+    #file { position:absolute; top:15px; left:15px; z-index:100; padding:8px; background: #222; border: 1px solid #444; color: #fff; border-radius: 4px; width: 200px;}
+    /* Performance monitor positioning */
+    #stats-container { position:absolute; bottom:15px; left:15px; z-index:100; pointer-events: none; }
+    /* Right-side control panel styling */
+    #panel { position:absolute; top:15px; right:15px; z-index:1000; min-width:280px; max-height: 90vh; overflow-y: auto; }
+    #ui { background: rgba(20,20,20,0.95); padding:15px; font-size:12px; border: 1px solid #333; border-radius: 8px; backdrop-filter: blur(10px); box-shadow: 0 8px 32px rgba(0,0,0,0.8); }
+    /* Status indicators for cuboid count and build time */
+    #statusBox { margin-bottom: 12px; padding: 12px; background: #000; border-left: 4px solid #00d4ff; border-radius: 4px; line-height: 1.6; }
+    .stat-row { display: flex; justify-content: space-between; border-bottom: 1px solid #222; padding: 2px 0; }
+    .stat-label { color: #888; text-transform: uppercase; font-size: 10px; }
+    .stat-value { color: #00d4ff; font-family: 'Courier New', monospace; font-weight: bold; }
+    #progressStep { color: #aaa; font-style: italic; font-size: 11px; margin-top: 8px; border-top: 1px solid #333; padding-top: 5px; }
+    /* Standard UI element overrides */
+    label, button { display:flex; align-items: center; margin-top:8px; width:100%; cursor:pointer; }
+    input[type="checkbox"] { margin-right: 10px; }
+    input[type="range"] { width: 100%; margin-top: 5px; accent-color: #00d4ff; cursor: pointer; }
+    select { background: #333; color: #fff; border: 1px solid #444; padding: 6px; border-radius: 4px; width: 100%; margin-top: 5px; cursor: pointer;}
+    button { background:#333; color:#eee; border:1px solid #444; padding:8px; border-radius:4px; transition: 0.2s; justify-content: center; font-weight: bold; }
+    button:hover { background:#444; border-color: #00d4ff; }
+    .control-group { margin-top: 12px; padding-top: 8px; border-top: 1px solid #333; }
+  </style>
+</head>
+<body>
+
+<input type="file" id="file" accept=".csv" />
+<div id="stats-container"></div>
+
+<div id="panel">
+  <div id="ui">
+    <div id="statusBox">
+        <div class="stat-row"><span class="stat-label">Cuboids</span> <span id="stat-count" class="stat-value">0</span></div>
+        <div class="stat-row"><span class="stat-label">Groups</span> <span id="stat-groups" class="stat-value">0</span></div>
+        <div class="stat-row"><span class="stat-label">Build Time</span> <span id="stat-time" class="stat-value">0ms</span></div>
+        <div id="progressStep">Ready...</div>
+    </div>
+
+    <div class="control-group">
+        <label>Projection Up Axis:</label>
+        <select id="upAxis">
+            <option value="0">X-Up</option>
+            <option value="1" selected>Y-Up</option>
+        </select>
+        <label>Tex Scale: <span id="tsVal">0.05</span></label>
+        <input type="range" id="texScale" min="0.001" max="0.5" step="0.001" value="0.05">
+        <button id="rotateTex">Rotate Texture (90°)</button>
+    </div>
+
+    <div class="control-group">
+      <button id="toggleMatcap">Toggle MatCap Mode</button>
+      <button id="randomizeMaterials">Shuffle Textures</button>
+      <button id="shuffleEnv">Shuffle Environment</button>
+      <label><input type="checkbox" id="toggleEnv" checked> Environment Visible</label>
+    </div>
+
+    <div class="control-group">
+      <label><input type="checkbox" id="toggleAxes" checked> Show Axis Helper</label>
+      <label><input type="checkbox" id="toggleBBox" checked> Show Group Bounds</label>
+      <button id="resetCam">Reset Camera</button>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.182.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.182.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { LightProbeGenerator } from 'three/addons/lights/LightProbeGenerator.js';
+import Stats from 'three/addons/libs/stats.module.js';
+
+// GLOBAL VARIABLES
+// State management for rendering, bounding boxes, and material modes
+let loadedRoot = null, needsRender = true, showBBox = true, isMatcapMode = false;
+let globalRotation = 0, envVisible = true;
+const stepEl = document.getElementById('progressStep');
+
+// SCENE INITIALIZATION
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0a0a);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 5000);
+camera.position.set(-60,60,-60);
+
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+// toneMapping = 7 corresponds to THREE.ACESFilmicToneMapping
+renderer.toneMapping = 7;
+renderer.toneMappingExposure = 0.8;
+document.body.appendChild(renderer.domElement);
+
+// Setup mouse interaction. needsRender ensures we only draw when moving.
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.addEventListener('change', () => { needsRender = true; });
+
+// Basic directional light to supplement IBL (Image Based Lighting)
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.3);
+dirLight.position.set(50, 50, 50);
+scene.add(dirLight);
+
+// LightProbe stores the ambient spherical harmonic data for realistic object lighting
+let lightProbe = new THREE.LightProbe();
+scene.add(lightProbe);
+
+const axesHelper = new THREE.AxesHelper(10);
+scene.add(axesHelper);
+
+const stats = new Stats();
+stats.dom.style.position = 'relative';
+document.getElementById('stats-container').appendChild(stats.dom);
+
+// --- ASSET LOADING ---
+// Configuration object for textures with specific material response scales
+const texLoader = new THREE.TextureLoader();
+const textures = {
+    grid: {
+        map: texLoader.load('./tex/grid.webp', (t) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.anisotropy = 8; needsRender = true; }),
+        bumpScale: 0.15,
+        roughnessScale: 2.5
+    },
+    wood: {
+        map: texLoader.load('./tex/wood1.webp', (t) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.anisotropy = 8; needsRender = true; }),
+        bumpScale: 0.2,
+        roughnessScale: 0.4
+    },
+    pat1: {
+        map: texLoader.load('./tex/grid2.webp', (t) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.anisotropy = 8; needsRender = true; }),
+        bumpScale: 0.02,
+        roughnessScale: 0.5
+    },
+    pat2: {
+        map: texLoader.load('./tex/grid3.webp', (t) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.anisotropy = 8; needsRender = true; }),
+        bumpScale: 0.45,
+        roughnessScale: 0.77
+    },
+    pat3: {
+        map: texLoader.load('./tex/pat3.webp', (t) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.anisotropy = 8; needsRender = true; }),
+        bumpScale: 0.05,
+        roughnessScale: 0.9
+    },
+    pat4: {
+        map: texLoader.load('./tex/pat4.webp', (t) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.anisotropy = 8; needsRender = true; }),
+        bumpScale: 0.03,
+        roughnessScale: 0.8
+    },
+    matcap: texLoader.load('./tex/matcap1.webp', (t) => { t.colorSpace = THREE.SRGBColorSpace; needsRender = true; })
+};
+
+// Sequential loading of environment maps, hemi
+const envMaps = [];
+[1,2,3,4].forEach((i, idx) => {
+    texLoader.load(`./tex/hemi${i}.webp`, (tex) => {
+        tex.mapping = THREE.EquirectangularReflectionMapping;
+        envMaps[idx] = tex;
+        if (idx === 0) updateEnvironment(tex);
+    });
+});
+let activeEnvIdx = 0;
+
+//
+// Recalculates lighting data from an environment map.
+// Generates a light probe from a low-res cube render of the texture.
+//
+async function updateEnvironment(tex) {
+    if(!tex) return;
+    scene.environment = tex;
+    if(envVisible) scene.background = tex;
+    const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(64);
+    cubeRenderTarget.fromEquirectangularTexture(renderer, tex);
+    const newProbe = await LightProbeGenerator.fromCubeRenderTarget(renderer, cubeRenderTarget);
+    lightProbe.copy(newProbe);
+    cubeRenderTarget.dispose();
+    needsRender = true;
+}
+
+//
+// Creates a material with custom Tri-Planar Shader injection.
+// Tri-planar mapping avoids UV stretching by projecting textures from 3 axes based on world position.
+//
+function createTriPlanarMat(texKey) {
+    const config = textures[texKey] || textures.grid;
+    const mat = new THREE.MeshStandardMaterial({
+        roughness: 1.0,
+        metalness: 0.0,
+        bumpScale: 1.0
+    });
+
+    // Shader Uniforms: Control texture behavior in real-time
+    mat.userData.uTexScale = { value: 0.05 };
+    mat.userData.uUpAxis = { value: 1 };
+    mat.userData.uTexRotation = { value: 0.0 };
+    mat.userData.uDiffuseMap = { value: config.map };
+    mat.userData.uBumpScale = { value: config.bumpScale ?? 0.05 };
+    mat.userData.uRoughnessScale = { value: config.roughnessScale ?? 1.0 };
+
+    mat.onBeforeCompile = (shader) => {
+        // Link JavaScript uniform values to GLSL uniforms
+        shader.uniforms.uTexScale = mat.userData.uTexScale;
+        shader.uniforms.uUpAxis = mat.userData.uUpAxis;
+        shader.uniforms.uTexRotation = mat.userData.uTexRotation;
+        shader.uniforms.uDiffuseMap = mat.userData.uDiffuseMap;
+        shader.uniforms.uBumpScale = mat.userData.uBumpScale;
+        shader.uniforms.uRoughnessScale = mat.userData.uRoughnessScale;
+
+        // Force shader to include logic for secondary maps
+        shader.fragmentShader = '#define USE_ROUGHNESSMAP\n#define USE_BUMPMAP\n' + shader.fragmentShader;
+
+        // Vertex Shader Injection: Pass world position and normal to fragment shader
+        shader.vertexShader = shader.vertexShader.replace(`#include <common>`,
+            `#include <common>
+             varying vec3 vWorldPos;
+             varying vec3 vWorldNormal;
+             varying vec2 vBumpMapUv;
+             varying vec2 vRoughnessMapUv;`);
+
+        shader.vertexShader = shader.vertexShader.replace(`#include <fog_vertex>`,
+            `#include <fog_vertex>
+             vec4 worldPos = modelMatrix * instanceMatrix * vec4(position, 1.0);
+             vWorldPos = worldPos.xyz;
+             vWorldNormal = normalize( mat3( modelMatrix * instanceMatrix ) * normal );
+             vBumpMapUv = vec2(0.0);
+             vRoughnessMapUv = vec2(0.0);`);
+
+        // Fragment Shader Injection: Tri-Planar Sampling Logic
+        shader.fragmentShader = shader.fragmentShader.replace(`#include <common>`,
+            `#include <common>
+             varying vec3 vWorldPos;
+             varying vec3 vWorldNormal;
+             uniform sampler2D uDiffuseMap;
+             uniform float uTexScale;
+             uniform float uTexRotation;
+             uniform float uBumpScale;
+             uniform float uRoughnessScale;
+             uniform int uUpAxis;
+
+// Rotation helper for the UV coordinates
+             vec2 rotateUV(vec2 uv, float rotation) {
+                float s = sin(rotation);
+                float c = cos(rotation);
+                return vec2(c * uv.x - s * uv.y, s * uv.x + c * uv.y);
+             }
+
+// Core tri-planar sampling function
+             vec3 triSample(sampler2D tex, vec3 p, vec3 n, float s, int ax, float rot) {
+                vec3 blending = abs(n);
+                blending /= (blending.x + blending.y + blending.z + 0.0001);
+                vec2 uvX, uvY, uvZ;
+                if(ax == 0) { uvX = p.yz; uvY = p.zx; uvZ = p.xy; }
+                else if(ax == 1) { uvX = p.zy; uvY = p.xz; uvZ = p.xy; }
+                else { uvX = p.xy; uvY = p.yz; uvZ = p.zx; }
+                vec3 cx = texture2D(tex, rotateUV(uvX, rot) * s).rgb;
+                vec3 cy = texture2D(tex, rotateUV(uvY, rot) * s).rgb;
+                vec3 cz = texture2D(tex, rotateUV(uvZ, rot) * s).rgb;
+                return cx * blending.x + cy * blending.y + cz * blending.z;
+             }
+
+             float getTriHeight(vec3 p, vec3 n) {
+                return triSample(uDiffuseMap, p, n, uTexScale, uUpAxis, uTexRotation).r;
+             }`);
+
+        shader.fragmentShader = shader.fragmentShader.replace(`void main() {`,
+            `void main() {
+             vec3 triOut = triSample(uDiffuseMap, vWorldPos, vWorldNormal, uTexScale, uUpAxis, uTexRotation);`);
+
+        shader.fragmentShader = shader.fragmentShader.replace(`#include <map_fragment>`,
+            `diffuseColor.rgb *= triOut;`);
+
+// Derive roughness from the green channel of the tri-sampled texture
+// manual roughness adjustment for used assets
+        shader.fragmentShader = shader.fragmentShader.replace(`#include <roughnessmap_fragment>`,
+            `#include <roughnessmap_fragment>
+             roughnessFactor = 0.15 + (triOut.g * uRoughnessScale);`);
+
+// Compute procedural bump mapping using derivative functions (dFdx, dFdy)
+        shader.fragmentShader = shader.fragmentShader.replace(`#include <normal_fragment_maps>`,
+            `#include <normal_fragment_maps>
+             #ifdef USE_BUMPMAP
+                float h0 = getTriHeight(vWorldPos, vWorldNormal);
+                float hx = dFdx(h0) * uBumpScale;
+                float hy = dFdy(h0) * uBumpScale;
+                normal = perturbNormalArb(-vViewPosition, normal, vec2(hx, hy), faceDirection);
+             #endif`);
+    };
+    return mat;
+}
+
+//
+// Worker Factory: Creates an inline Web Worker to handle CPU-intensive CSV parsing and spatial binning without locking the UI thread.
+//
+
+function createWorker() {
+    const blob = new Blob([`
+        // Scans the raw byte array to find the global min/max bounds of all cuboids
+        function scanBounds(bytes) {
+            let minX=2e9, minY=2e9, minZ=2e9, maxX=-2e9, maxY=-2e9, maxZ=-2e9;
+            let val=0, sign=1, col=0;
+            for (let i = 0; i < bytes.length; i++) {
+                const b = bytes[i];
+                if (b === 45) { sign = -1; continue; }
+                if (b >= 48 && b <= 57) { val = val * 10 + (b - 48); }
+                else if (b === 44 || b === 59 || b === 10 || b === 13) {
+                    if (col === 1) minX = Math.min(minX, val * sign);
+                    else if (col === 2) minY = Math.min(minY, val * sign);
+                    else if (col === 3) minZ = Math.min(minZ, val * sign);
+                    else if (col === 4) maxX = Math.max(maxX, val * sign);
+                    else if (col === 5) maxY = Math.max(maxY, val * sign);
+                    else if (col === 6) maxZ = Math.max(maxZ, val * sign);
+                    if (b === 10 || b === 13) col = 0; else col++;
+                    val = 0; sign = 1;
+                }
+            }
+            return { minX, minY, minZ, maxX, maxY, maxZ };
+        }
+
+        // Fast integer parsing and spatial voxel binning
+        function parseAndBin(bytes, params) {
+            const { min, sz, nx, ny, nz } = params;
+            const coords = new Int32Array(Math.floor(bytes.length / 8) * 6);
+            const localGrid = Array.from({length: nx*ny*nz}, () => []);
+            let val = 0, sign = 1, col = 0, row = 0, idx = 0;
+            for (let i = 0; i < bytes.length; i++) {
+                const b = bytes[i];
+                if (b === 45) { sign = -1; continue; }
+                if (b >= 48 && b <= 57) { val = val * 10 + (b - 48); }
+                else if (b === 44 || b === 59 || b === 10 || b === 13) {
+                    if (col > 0) coords[idx++] = val * sign;
+                    if (b === 10 || b === 13) {
+                        const r = row * 6;
+                        if (idx >= r + 6) {
+                            // Assign cuboid to grid cells based on min/max coords
+                            let gx = Math.floor((coords[r] - min.x) / sz.x), gy = Math.floor((coords[r+1] - min.y) / sz.y), gz = Math.floor((coords[r+2] - min.z) / sz.z);
+                            let gx2 = Math.floor((coords[r+3] - min.x) / sz.x), gy2 = Math.floor((coords[r+4] - min.y) / sz.y), gz2 = Math.floor((coords[r+5] - min.z) / sz.z);
+                            for(let x = Math.max(0, gx); x <= Math.min(nx-1, gx2); x++)
+                                for(let y = Math.max(0, gy); y <= Math.min(ny-1, gy2); y++)
+                                    for(let z = Math.max(0, gz); z <= Math.min(nz-1, gz2); z++)
+                                        localGrid[x + nx*(y + ny*z)].push(row);
+                            row++;
+                        }
+                        col = 0;
+                    } else col++;
+                    val = 0; sign = 1;
+                }
+            }
+            return { coords: coords.slice(0, idx), localGrid, rowCount: row };
+        }
+
+        // Message handler for the Worker thread
+        self.onmessage = async e => {
+            const { mode, chunk, wasmUrl, cuboidsInt, cells, gridParams } = e.data;
+            if(mode === 'scan') {
+                self.postMessage({ mode: 'scanned', res: scanBounds(new Uint8Array(chunk)) });
+            } else if(mode === 'parseAndBin') {
+                const res = parseAndBin(new Uint8Array(chunk), gridParams);
+                self.postMessage({ mode: 'parsed', res }, [res.coords.buffer]);
+            } else if(mode === 'group') {
+                // WASM integration for high-performance adjacency checks
+                const count = cuboidsInt.length / 6;
+                const wasmMemory = new WebAssembly.Memory({ initial: Math.ceil((cuboidsInt.length*4 + 4000000)/65536)+20 });
+                const { instance } = await WebAssembly.instantiate(await (await fetch(wasmUrl)).arrayBuffer(), { env: { memory: wasmMemory } });
+                const wasmProcessCell = instance.exports.process_cell || instance.exports._process_cell;
+                const ptrs = { cuboidsPtr: 0, cellIndicesPtr: cuboidsInt.length*4, outPairsPtr: cuboidsInt.length*4 + 150000 };
+                new Int32Array(wasmMemory.buffer, ptrs.cuboidsPtr, cuboidsInt.length).set(cuboidsInt);
+
+                // Union-Find (Disjoint Set) logic for connectivity grouping
+                const parent = new Int32Array(count).fill(-1);
+                const find = i => parent[i] < 0 ? i : (parent[i] = find(parent[i]));
+                const union = (a, b) => { a=find(a); b=find(b); if(a!==b){ if(parent[a]>parent[b]) [a,b]=[b,a]; parent[a]+=parent[b]; parent[b]=a; }};
+
+                const cBuf = new Int32Array(wasmMemory.buffer, ptrs.cellIndicesPtr, 60000);
+                const pBuf = new Int32Array(wasmMemory.buffer, ptrs.outPairsPtr, 120000);
+                for(const cell of cells) {
+                    if(cell.length < 2) continue;
+                    cBuf.set(cell);
+                    const found = wasmProcessCell(ptrs.cuboidsPtr, ptrs.cellIndicesPtr, cell.length, ptrs.outPairsPtr, 60000);
+                    for(let p=0; p<found; p++) union(pBuf[p*2], pBuf[p*2+1]);
+                }
+                self.postMessage({ mode: 'grouped', data: parent.buffer }, [parent.buffer]);
+            }
+        };
+    `], {type:'application/javascript'});
+    return new Worker(URL.createObjectURL(blob));
+}
+
+//
+// Main File Processor: Coordinates the multi-step pipeline
+//  1. Scan -> 2. Adaptive Grid Math -> 3. Bin -> 4. WASM Grouping -> 5. Scene Build
+//
+
+async function processFile(file) {
+    const totalStart = performance.now();
+    stepEl.innerHTML = "Processing...";
+
+    const THREADS = Math.min(navigator.hardwareConcurrency || 4, 16);
+    const wasmUrl = new URL('wasm/v4_27_adj.wasm', window.location.href).href;
+
+    const fullBuffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(fullBuffer);
+
+    // 1. SCAN PHASE
+    // Finds the min/max world bounds across all threads
+    const scanParseStart = performance.now();
+    const scanPromises = Array.from({length: THREADS}, (_, i) => {
+        let start = i * Math.floor(bytes.length/THREADS);
+        let end = (i === THREADS-1) ? bytes.length : (i+1) * Math.floor(bytes.length/THREADS);
+        // Align chunk start/end to line breaks
+        if(i > 0) { while(start < bytes.length && bytes[start-1] !== 10) start++; }
+        if(i < THREADS-1) { while(end < bytes.length && bytes[end-1] !== 10) end++; }
+        const chunk = fullBuffer.slice(start, end);
+        const w = createWorker();
+        return new Promise(res => {
+            w.onmessage = e => { res(e.data.res); w.terminate(); };
+            w.postMessage({ mode: 'scan', chunk }, [chunk]);
+        });
+    });
+
+    const scanRes = await Promise.all(scanPromises);
+    let minX=2e9, minY=2e9, minZ=2e9, maxX=-2e9, maxY=-2e9, maxZ=-2e9;
+    scanRes.forEach(r => {
+        minX=Math.min(minX, r.minX); minY=Math.min(minY, r.minY); minZ=Math.min(minZ, r.minZ);
+        maxX=Math.max(maxX, r.maxX); maxY=Math.max(maxY, r.maxY); maxZ=Math.max(maxZ, r.maxZ);
+    });
+
+    // 2. ADAPTIVE GRID CALCULATION
+    // Logic to determine grid resolution based on cuboid density and total volume span
+    const spanX = maxX - minX, spanY = maxY - minY, spanZ = maxZ - minZ;
+    const maxS = Math.max(spanX, spanY, spanZ);
+    const estCount = bytes.length / 50;
+
+    //
+    // key optimization values balancing processing performance between uniform vs elongated cuboids along wihh cuboid count
+    // Calculate base density using square-root scaling to balance memory vs speed
+    // default 10 / 5000
+    //
+    let baseDim = Math.max(2, Math.floor(Math.pow(estCount / 10000, 0.5) * 10));
+    baseDim = Math.min(baseDim, 65); // Safety cap
+
+    // default 4
+    const nx = Math.max(4, Math.round((spanX / maxS) * baseDim));
+    const ny = Math.max(4, Math.round((spanY / maxS) * baseDim));
+    const nz = Math.max(4, Math.round((spanZ / maxS) * baseDim));
+
+    console.log(`🚀 Adaptive Grid: ${nx}x${ny}x${nz} | Target Dim: ${baseDim}`);
+
+    const gridParams = {
+        min: { x: minX - 1, y: minY - 1, z: minZ - 1 },
+        sz:  { x: (spanX + 2) / nx, y: (spanY + 2) / ny, z: (spanZ + 2) / nz },
+        nx, ny, nz
+    };
+
+    // 3. BINNING PHASE
+    // Distribute cuboids into the grid cells
+    const binPromises = Array.from({length: THREADS}, (_, i) => {
+        let start = i * Math.floor(bytes.length/THREADS);
+        let end = (i === THREADS-1) ? bytes.length : (i+1) * Math.floor(bytes.length/THREADS);
+        if(i > 0) { while(start < bytes.length && bytes[start-1] !== 10) start++; }
+        if(i < THREADS-1) { while(end < bytes.length && bytes[end-1] !== 10) end++; }
+        const chunk = fullBuffer.slice(start, end);
+        const w = createWorker();
+        return new Promise(res => {
+            w.onmessage = e => { res(e.data.res); w.terminate(); };
+            w.postMessage({ mode: 'parseAndBin', chunk, gridParams }, [chunk]);
+        });
+    });
+
+    const workerData = await Promise.all(binPromises);
+    console.log(`Scan/Parse: ${Math.round(performance.now() - scanParseStart)}ms`);
+
+    // 4. GROUPING PHASE
+    // Combine local results and perform adjacency grouping via WASM
+    const groupStart = performance.now();
+    const totalCount = workerData.reduce((acc, r) => acc + r.rowCount, 0);
+    document.getElementById('stat-count').innerText = totalCount.toLocaleString();
+
+    const cuboidsInt = new Int32Array(totalCount * 6);
+    const globalGrid = Array.from({ length: nx * ny * nz }, () => []);
+
+    let rowOffset = 0;
+    for (const res of workerData) {
+        cuboidsInt.set(res.coords, rowOffset * 6);
+        res.localGrid.forEach((cell, i) => {
+            for (let j = 0; j < cell.length; j++) {
+                globalGrid[i].push(cell[j] + rowOffset);
+            }
+        });
+        rowOffset += res.rowCount;
+    }
+
+    const groupWorkerPromises = Array.from({length: THREADS}, (_, i) => new Promise(res => {
+        const w = createWorker();
+        const slice = globalGrid.slice(Math.floor(i * (globalGrid.length / THREADS)), Math.floor((i + 1) * (globalGrid.length / THREADS)));
+        w.onmessage = e => { res(new Int32Array(e.data.data)); w.terminate(); };
+        w.postMessage({ mode: 'group', wasmUrl, cuboidsInt, cells: slice });
+    }));
+
+    const groupResults = await Promise.all(groupWorkerPromises);
+
+    // Final Union-Find pass to merge groups found across different worker slices
+    const parent = new Int32Array(totalCount).fill(-1);
+    const find = i => parent[i] < 0 ? i : (parent[i] = find(parent[i]));
+    groupResults.forEach(res => {
+        for (let i = 0; i < res.length; i++) {
+            if (res[i] >= 0) {
+                let a = find(i), b = find(res[i]);
+                if (a !== b) {
+                    if (parent[a] > parent[b]) [a, b] = [b, a];
+                    parent[a] += parent[b]; parent[b] = a;
+                }
+            }
+        }
+    });
+
+    const groupsMap = new Map();
+    for (let i = 0; i < totalCount; i++) {
+        const r = find(i);
+        if (!groupsMap.has(r)) groupsMap.set(r, []);
+        groupsMap.get(r).push(i);
+    }
+    console.log(`Grouping: ${Math.round(performance.now() - groupStart)}ms`);
+
+    // 5. SCENE BUILD PHASE
+    const buildStart = performance.now();
+    const filtered = [...groupsMap.values()].filter(g => g.length >= 2);
+    document.getElementById('stat-groups').innerText = filtered.length.toLocaleString();
+
+    buildScene(cuboidsInt, filtered, minX, minY, minZ, maxX, maxY, maxZ);
+
+    const finalElapsed = Math.round(performance.now() - totalStart);
+    console.log(`Total processing: ${finalElapsed}ms`);
+    document.getElementById('stat-time').innerText = `${finalElapsed}ms`;
+}
+
+
+// BUILDSCENE
+// Uses InstancedMesh for performance, drawing thousands of boxes in a single draw call.
+
+function buildScene(cuboidsInt, groups, minX, minY, minZ, maxX, maxY, maxZ) {
+    if (loadedRoot) scene.remove(loadedRoot);
+    const root = new THREE.Object3D();
+    const scale = 50 / (Math.max(maxX-minX, maxY-minY, maxZ-minZ) || 1);
+    const cx=(minX+maxX)/2, cy=(minY+maxY)/2, cz=(minZ+maxZ)/2;
+    const geom = new THREE.BoxGeometry(1, 1, 1);
+    const matrix = new THREE.Matrix4();
+    const matLib = ['wood', 'pat1', 'pat2', 'pat3', 'pat4', 'grid'];
+
+    groups.forEach(indices => {
+        const texKey = matLib[Math.floor(Math.random()*matLib.length)];
+        const pbrMat = createTriPlanarMat(texKey);
+
+        // Initialize MatCap material
+        pbrMat.userData.matcapMat = new THREE.MeshMatcapMaterial({
+            matcap: textures.matcap,
+            color: new THREE.Color().setHSL(Math.random(), 0.4, 0.7)
+        });
+
+        const im = new THREE.InstancedMesh(geom, pbrMat, indices.length);
+        im.frustumCulled = false;
+        for(let i=0; i<indices.length; i++){
+            const o = indices[i]*6;
+            const w=(cuboidsInt[o+3]-cuboidsInt[o]), h=(cuboidsInt[o+4]-cuboidsInt[o+1]), d=(cuboidsInt[o+5]-cuboidsInt[o+2]);
+            matrix.makeScale(Math.max(0.01, w*scale), Math.max(0.01, h*scale), Math.max(0.01, d*scale));
+            matrix.setPosition((cuboidsInt[o]+w/2-cx)*scale, (cuboidsInt[o+1]+h/2-cy)*scale, (cuboidsInt[o+2]+d/2-cz)*scale);
+            im.setMatrixAt(i, matrix);
+        }
+        // Visual debug for groups
+        if(showBBox){ const box=new THREE.Box3().setFromObject(im); const h=new THREE.Box3Helper(box, 0x00d4ff); h.isBox3Helper=true; root.add(h); }
+        root.add(im);
+    });
+    scene.add(root);
+    loadedRoot = root;
+    updateTexUniforms();
+    stepEl.innerHTML = "Done.";
+    needsRender = true;
+}
+
+// UI EVENT LISTENERS
+document.getElementById('file').onchange = e => { if(e.target.files[0]) processFile(e.target.files[0]); };
+
+//
+// Iterates through all meshes and updates the custom shader uniforms
+//
+const updateTexUniforms = () => {
+    if(!loadedRoot) return;
+    const scale = parseFloat(document.getElementById('texScale').value);
+    const axis = parseInt(document.getElementById('upAxis').value);
+    document.getElementById('tsVal').innerText = scale;
+    loadedRoot.traverse(o => {
+        if(o.isInstancedMesh && o.material.userData.uTexScale) {
+            o.material.userData.uTexScale.value = scale;
+            o.material.userData.uUpAxis.value = axis;
+            o.material.userData.uTexRotation.value = globalRotation;
+        }
+    });
+    needsRender = true;
+};
+
+document.getElementById('rotateTex').onclick = () => {
+    globalRotation = (globalRotation + Math.PI/2) % (Math.PI * 2);
+    updateTexUniforms();
+};
+
+document.getElementById('toggleEnv').onchange = e => {
+    envVisible = e.target.checked;
+    scene.background = envVisible ? envMaps[activeEnvIdx] : new THREE.Color(0x0a0a0a);
+    needsRender = true;
+};
+
+document.getElementById('texScale').oninput = updateTexUniforms;
+document.getElementById('upAxis').onchange = updateTexUniforms;
+document.getElementById('shuffleEnv').onclick = () => {
+    activeEnvIdx = (activeEnvIdx + 1) % envMaps.length;
+    updateEnvironment(envMaps[activeEnvIdx]);
+};
+
+//
+// Material type swapping
+//
+document.getElementById('toggleMatcap').onclick = () => {
+    if(!loadedRoot) return;
+    isMatcapMode = !isMatcapMode;
+
+    loadedRoot.traverse(o => {
+        if(o.isInstancedMesh) {
+            // Reference to both states
+            if (!o.userData.originalMat) o.userData.originalMat = o.material;
+            if (!o.userData.matcapMat) o.userData.matcapMat = new THREE.MeshMatcapMaterial({ matcap: textures.matcap });
+
+            // Swap the material
+            o.material = isMatcapMode ? o.userData.matcapMat : o.userData.originalMat;
+
+            // Material update
+            o.material.needsUpdate = true;
+        }
+    });
+    needsRender = true;
+};
+
+//
+// Randomize textures
+//
+document.getElementById('randomizeMaterials').onclick = () => {
+    if(!loadedRoot || isMatcapMode) return;
+    const keys = ['wood','grid','pat1','pat2','pat3','pat4'];
+    loadedRoot.traverse(o => {
+        if(o.isInstancedMesh && !isMatcapMode){
+            const key = keys[Math.floor(Math.random()*keys.length)];
+            const config = textures[key];
+            o.material.userData.uDiffuseMap.value = config.map;
+            o.material.userData.uBumpScale.value = config.bumpScale;
+            o.material.userData.uRoughnessScale.value = config.roughnessScale;
+            o.material.color.setHSL(Math.random(), 0.3, 0.8);
+        }
+    });
+    needsRender = true;
+};
+
+document.getElementById('toggleAxes').onchange = e => { axesHelper.visible = e.target.checked; needsRender = true; };
+document.getElementById('toggleBBox').onchange = e => { showBBox = e.target.checked; if(loadedRoot) loadedRoot.traverse(o => { if(o.isBox3Helper) o.visible = showBBox; }); needsRender = true; };
+document.getElementById('resetCam').onclick = () => { controls.reset(); camera.position.set(-60,60,-60); needsRender = true; };
+
+window.addEventListener('resize', () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); needsRender = true; });
+
+//
+// Main render loop using requestAnimationFrame.
+// Only calls renderer.render if needsRender is true to save CPU/GPU cycles, battery and prevent device heating
+//
+
+function animate() {
+    requestAnimationFrame(animate);
+    if (controls.update() || needsRender) {
+        stats.begin();
+        renderer.render(scene, camera);
+        needsRender = false;
+        stats.end();
+    }
+}
+animate();
+
+// Expose globals for console debugging
+window.scene = scene;
+window.renderer = renderer;
+</script>
+</body>
+</html>
