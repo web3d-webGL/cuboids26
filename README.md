@@ -2,6 +2,12 @@
 
 High-performance WebGL viewer designed to sort face adjacent cuboids, discard loose ones, group and visualize hundreds of thousands of cuboids from CSV data in real-time.
 
+## [Live Cuboid 3D Viewer v4.70.5](https://labs.web3d.co/cuboids26/)
+
+
+## [Data Samples 500k Cuboids](https://labs.web3d.co/cuboids26/data_samples.zip)
+
+
 ---
 
 ## Key Features
@@ -225,11 +231,6 @@ This approach opens the door to pairing live, browser-based visualization with t
 - **Speculars:** Bake shininess into LUTs based on cuboid orientation.
 - **Refractions:** Use WASM knowledge of group depth to create thickness maps, simulating light bending through cuboid clusters.
 
-
-## Theoretical "V5" Pipeline
-
-
-
 | Innovation        | Implementation           | Result |
 |------------------|-------------------------|--------|
 | Baking Shells     | Complex mesh → Cuboid proxies | Infinite detail at 60 FPS |
@@ -237,7 +238,35 @@ This approach opens the door to pairing live, browser-based visualization with t
 | Synthetic Aperture| Temporal multi-sampling        | Cinematic realism in browser |
 | Harmonic Voxels   | Light-probes per group          | Pre-baked RayTraced web 3d  |
 
+---
+
+## The "5D Voxel-Harmonic" Framework
+
+The project moves toward a **volumetric CGI engine**. Cuboids act as spatial cells containing complex baked harmonics, solving the web-based CGI challenge: **performance vs. visual complexity**. Scenes that would be 40GB in raytraced geometry can behave like 50MB voxel grids, with reflections, refractions, and global illumination baked into a 5D structure.
+
+This represents **“Clean 3DGS”**: radiance fields of Gaussian Splatting pinned to a structured voxel grid, enabling professional CGI-quality results in real time on the web.
+
+By merging voxel efficiency, the visual fidelity of Gaussian Splatting, and CGI harmonics, a **5D Spatial Cell** architecture emerges:
+
+### 1. Separated Raytracing Behavior (Baked Harmonics)
+- Each voxel stores a radiance distribution function in Spherical Harmonics.
+- Bakes diffuse, specular, and inter-reflections into harmonic coefficients.
+- Voxels “know” how they appear from any viewing angle, enabling real-time dynamic lighting.
+
+### 2. Voxel Face Subdivision
+- Each voxel face becomes a subdivided 32-bit harmonic canvas: V(x,y,z,face_u,face_v).
+- Supports micro-surface detail and acts as a “holographic” proxy for high-poly geometry.
+
+### 3. Log-Compressed Normals (Data, not Geometry)
+- Bakes normals from ultra-high-poly sources and compresses them logarithmically.
+- Preserves sharp edges and subtle curvatures in a small memory footprint.
+- Voxels visually mimic million-polygon objects while remaining lightweight.
+
+### 4. Baking the Synthetic Aperture
+- 5D voxels inherently support multi-view synthesis.
+- Enables true physical bokeh and light-field effects without per-frame raytracing.
+
 
 ## Philosophical Summary
 
-The "Cuboid Viewer" journey demonstrates that **simplicity can unlock sophistication**. By leveraging the simplest 3D primitive, the box, it is possible to represent complex structures with high fidelity and extreme performance in a browser.
+The "Cuboid Viewer" journey demonstrates that **simplicity can unlock sophistication** if you give it little more love and attention. By leveraging the simplest 3D primitive, the box, it is possible to represent complex structures with high fidelity and extreme performance in a browser.
