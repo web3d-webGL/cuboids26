@@ -1,0 +1,24 @@
+    /* UI STYLING: Defines the layout for the sidebar controls and the full-screen canvas */
+    html, body { margin:0; padding:0; overflow:hidden; font-family: 'Segoe UI', system-ui, sans-serif; background:#0a0a0a; color:#eee;}
+    canvas { display:block; }
+    /* Position file input over the top-left */
+    #file { position:absolute; top:15px; left:15px; z-index:100; padding:8px; background: #222; border: 1px solid #444; color: #fff; border-radius: 4px; width: 200px;}
+    /* Performance monitor positioning */
+    #stats-container { position:absolute; bottom:15px; left:15px; z-index:100; pointer-events: none; }
+    /* Right-side control panel styling */
+    #panel { position:absolute; top:15px; right:15px; z-index:1000; min-width:280px; max-height: 90vh; overflow-y: auto; }
+    #ui { background: rgba(20,20,20,0.95); padding:15px; font-size:12px; border: 1px solid #333; border-radius: 8px; backdrop-filter: blur(10px); box-shadow: 0 8px 32px rgba(0,0,0,0.8); }
+    /* Status indicators for cuboid count and build time */
+    #statusBox { margin-bottom: 12px; padding: 12px; background: #000; border-left: 4px solid #00d4ff; border-radius: 4px; line-height: 1.6; }
+    .stat-row { display: flex; justify-content: space-between; border-bottom: 1px solid #222; padding: 2px 0; }
+    .stat-label { color: #888; text-transform: uppercase; font-size: 10px; }
+    .stat-value { color: #00d4ff; font-family: 'Courier New', monospace; font-weight: bold; }
+    #progressStep { color: #aaa; font-style: italic; font-size: 11px; margin-top: 8px; border-top: 1px solid #333; padding-top: 5px; }
+    /* Standard UI element overrides */
+    label, button { display:flex; align-items: center; margin-top:8px; width:100%; cursor:pointer; }
+    input[type="checkbox"] { margin-right: 10px; }
+    input[type="range"] { width: 100%; margin-top: 5px; accent-color: #00d4ff; cursor: pointer; }
+    select { background: #333; color: #fff; border: 1px solid #444; padding: 6px; border-radius: 4px; width: 100%; margin-top: 5px; cursor: pointer;}
+    button { background:#333; color:#eee; border:1px solid #444; padding:8px; border-radius:4px; transition: 0.2s; justify-content: center; font-weight: bold; }
+    button:hover { background:#444; border-color: #00d4ff; }
+    .control-group { margin-top: 12px; padding-top: 8px; border-top: 1px solid #333; }
